@@ -18,6 +18,7 @@
 #include <WiFiUdp.h>
 #include <EEPROM.h>
 
+
 #include <math.h>
 #include <SunPos.h>
 
@@ -138,6 +139,8 @@ boolean      PgmPrevG         = false;
 boolean      PgmNextG         = false;
 boolean      PgmSaveG         = false;
 int          angulo_puesta_sol[7];
+boolean      control_sol= false;
+boolean      control_manual= false;
 
 
 boolean      Run=false;
@@ -163,7 +166,19 @@ boolean       FC_abierta;
 int           buttonState = 0; 
 boolean       FC_P_cerrada;
 boolean       FC_P_abierta;
-long          t_apertura=20000;
+long          t_apertura=30000;
+long          t_cierre=20000;
+float         Latitud=40.41;
+float         Longitud=-3.731;
+int           signoLat;
+int           signoLon;
+int           Lat;
+int           LatH;
+int           LatL;
+int           Lon;
+int           LonH;
+int           LonL;
+
 //###############################################################################################
 // Setup
 //
@@ -171,8 +186,8 @@ long          t_apertura=20000;
  
 void setup(void)
 {
-   lugar.dLatitude= 40.41; //Norte (positiva)
-  lugar.dLongitude= -3.733;// Este (positiva)//
+  lugar.dLatitude= Latitud; //Norte (positiva)
+  lugar.dLongitude= Longitud;// Este (positiva)//
  
    // For debug only - REMOVE
   //----------------------------------------------------------------------
@@ -180,8 +195,8 @@ void setup(void)
   pinMode(Relay,OUTPUT);
   pinMode(Relay_abrir,OUTPUT);
   pinMode(Relay_cerrar,OUTPUT);
-  pinMode(FC_P_cerrada_Pin, INPUT_PULLUP); //final de carrera puerta bajada
-  pinMode(FC_P_abierta_Pin, INPUT_PULLUP); //final de carrera puerta abierta
+  pinMode(FC_P_cerrada_Pin, INPUT); //final de carrera puerta bajada
+  pinMode(FC_P_abierta_Pin, INPUT); //final de carrera puerta abierta
 
   digitalWrite(Relay,HIGH);
   digitalWrite(Relay_abrir,HIGH); //en los reles va ala revés
@@ -200,6 +215,9 @@ void setup(void)
 //###############################################################################################
 void loop() {
 
+ lugar.dLatitude= Latitud; //Norte (positiva)
+ lugar.dLongitude= Longitud;// Este (positiva)//
+  
    // fecha de sunpos PSA
   fecha_hora_PSA.iYear=year();
   fecha_hora_PSA.iMonth=month();
@@ -211,12 +229,12 @@ void loop() {
 
 
   FC_P_cerrada = digitalRead(FC_P_cerrada_Pin);
-   if (FC_P_cerrada == LOW ) {
+   if (FC_P_cerrada == HIGH ) {
      // Serial.println("Final de carrera puerta cerrada activo");
       FC_cerrada=true;
    } else{FC_cerrada=false; }
    FC_P_abierta = digitalRead(FC_P_abierta_Pin);
-   if (FC_P_abierta == LOW ) {
+   if (FC_P_abierta == HIGH ) {
      // Serial.println("Final de carrera puerta abierta activo");
       FC_abierta=true;
    } else{FC_abierta=false;}
@@ -482,6 +500,23 @@ void loop() {
     //----------------------------------------------------------------------
     if (request.indexOf("SaveBtn4=") != -1) {
       Page = 4;
+      //Latitud y longitud
+      if (request.indexOf("Latitud=") != -1) {
+        String Tmp = request;
+        int t1 = Tmp.indexOf("Latitud=");
+        Tmp.remove(0,t1+8);
+        t1 = Tmp.indexOf("&");
+        Tmp.remove(t1);
+        Latitud = Tmp.toFloat();
+        }
+      if (request.indexOf("Longitud=") != -1) {
+        String Tmp = request;
+        int t1 = Tmp.indexOf("Longitud=");
+        Tmp.remove(0,t1+9);
+        t1 = Tmp.indexOf("&");
+        Tmp.remove(t1);
+        Longitud = Tmp.toFloat();
+        }
       // Time Zone
       if (request.indexOf("TZH=") != -1)  {
         String Tmp = request;
@@ -622,13 +657,32 @@ void loop() {
     // Check time before updating web page
     //----------------------------------------------------------------------
     DoTimeCheck();
-
+    DoTimeCheckGallinero();
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 
     // PAGE 5 - PROGRAM Puerta Gallinero
     //------------------
+    //Botones de abrir y cerrar puerta
+     if (request.indexOf("CerrarPuertaBtn=") != -1) {
+      Serial.println("Cerrar pueta Manual");
+      FC_P_cerrada = digitalRead(FC_P_cerrada_Pin);
+      if (FC_P_cerrada == HIGH ) { FC_cerrada=true;} else{FC_cerrada=false; }
+      Serial.println (FC_P_cerrada);
+      if (!FC_cerrada){cerrar_puerta();}
+    }
+     if (request.indexOf("AbrirPuertaBtn=") != -1) {
+      Serial.println("Abrir pueta Manual");
+      FC_P_abierta = digitalRead(FC_P_abierta_Pin);
+      if (FC_P_abierta == HIGH ) { FC_abierta=true;} else{FC_abierta=false; }
+      if (!FC_abierta){abrir_puerta();}
+    }
+
+
+    
+    //tiempos de apertura y cierre
+    
     // See if Previous Buttomn was pressed
     //----------------------------------------------------------------------
     if (request.indexOf("SaveBtnPrevG=") != -1) {
@@ -653,16 +707,7 @@ void loop() {
       PgmPrevG = false;
       PgmNextG = false;
     }
-//----------------------------------------------------------------------
-    if (request.indexOf("AngPuestaSol=") != -1) {
-      String Tmp = request;
-        int t1 = Tmp.indexOf("AngPuestaSol=");
-        Tmp.remove(0,t1+13);
-        t1 = Tmp.indexOf("&");
-        Tmp.remove(t1);
-        angulo_puesta_sol[PgmNrG] = Tmp.toInt();
-       
-    }
+
     
     
     // See if Clear Button was pressed
@@ -683,7 +728,37 @@ void loop() {
     //----------------------------------------------------------------------
     if (PgmSaveG == true) {
       PgmSaveG = false;
-      // On Hour
+
+      if (request.indexOf("AngPuestaSol=") != -1) {
+      String Tmp = request;
+        int t1 = Tmp.indexOf("AngPuestaSol=");
+        Tmp.remove(0,t1+13);
+        t1 = Tmp.indexOf("&");
+        Tmp.remove(t1);
+        angulo_puesta_sol[PgmNrG] = Tmp.toInt();
+       
+    }
+
+    if (request.indexOf("t_apertura=") != -1) {
+      String Tmp = request;
+        int t1 = Tmp.indexOf("t_apertura=");
+        Tmp.remove(0,t1+11);
+        t1 = Tmp.indexOf("&");
+        Tmp.remove(t1);
+        t_apertura = Tmp.toInt();
+       
+    }
+    if (request.indexOf("t_cierre=") != -1) {
+      String Tmp = request;
+        int t1 = Tmp.indexOf("t_cierre=");
+        Tmp.remove(0,t1+9);
+        t1 = Tmp.indexOf("&");
+        Tmp.remove(t1);
+        t_cierre = Tmp.toInt();
+       
+    }
+    
+       // On Hour
       if (request.indexOf("OnHG=") != -1)  {
         String Tmp = request;
         int t1 = Tmp.indexOf("OnHG=");
@@ -731,6 +806,12 @@ void loop() {
       sol[PgmNrG] = false;
       // control salida/puesta del sol
       if (request.indexOf("sol=on") != -1) sol[PgmNrG]= true;
+
+      //control Manual 
+      if (request.indexOf("control_manual=on") != -1) {
+       control_manual=true;
+      }else{control_manual=false;}
+      
       
       // Reset day flags
       DG[0] = false;
@@ -787,7 +868,7 @@ void loop() {
     }
   
     
-    
+    DoTimeCheckGallinero();
 
 
 ////////////////////////////////////////////////////
@@ -806,7 +887,8 @@ void loop() {
     //client.println("<META HTTP-EQUIV=""refresh"" CONTENT=""30;url=http://example.com"">");
     client.print("<META HTTP-EQUIV=""refresh"" CONTENT=""30;url=http://");
     client.print(WiFi.localIP());
-    
+    client.print("/Link=");
+    client.print(Page);
     client.println(">");
     
     
@@ -821,7 +903,7 @@ void loop() {
     client.println(DevName);
     client.print("</font></b><br>"); 
     
-    //
+    /*
     client.println("D4 Output relay - ");
     //client.println("D2 Satatus LED");
     //client.println("D7 Boton Run/Stop");
@@ -829,7 +911,7 @@ void loop() {
     client.println("D6 Relay_cerrar - ");
     client.println("D7 Final carrera Cerrado - ");
     client.println("D1 Final carrera Abierto - ");
-  
+  */
     // Show time
     //----------------------------------------------------------------------
     client.print("<p style=\"color:#180BF4;\";>");  
@@ -899,11 +981,11 @@ void loop() {
     // Year
     //----------------------------------------------------------------------
     client.print(year());
-    client.print("<br><br>");
+    client.print("<br>");
     client.print(F("AcimutSol: ")); float valor=sun.dAzimuth-180;  client.print(valor);
     client.print(F("  CenitSol: ")); valor=sun.dZenithAngle;  client.print(valor);
         
-    client.print("<br><br>");
+    client.print("<br>");
     // Show system status
     //----------------------------------------------------------------------
     client.print("Rele (D4): </b>");
@@ -931,17 +1013,20 @@ void loop() {
       }
       
       client.println("<br>");
-      client.print(" ProgramaGallinero : Estado:"); 
+      client.print(" Programa Gallinero : Estado:"); 
       if (puerta_abierta) {client.print("Puerta Abierta");} 
       if (puerta_cerrada) {client.print("Puerta Cerrada");} 
       client.println("<br>");
       
       client.print("Angulo cenital de abrir/cerrar:"); 
       client.print(angulo);client.println("<br>");
-      client.print("Final Carrera Cerrada:");     client.print(FC_cerrada);client.println("<br>");
-      client.print("Final Carrera Abierta:");     client.print(FC_abierta);client.println("<br>");
-          
-    client.println("<br><br>");
+      client.print("Final Carrera Cerrada:"); if(FC_cerrada){    client.print(" Activado");}else{client.print(" NO Activado");} client.println("<br>");
+      client.print("Final Carrera Abierta:");     if(FC_abierta){    client.print(" Activado");}else{client.print(" NO Activado");}client.println("<br>");
+      client.print("Control  Puerta:");     if(control_manual){    client.print(" Manual");}else{client.print(" Automatico");}client.println("<br>");
+
+       
+      
+    //client.println("<br><br>");
     //Menu
     //----------------------------------------------------------------------
     client.print("<form action= method=\"get\"><b>");
@@ -952,12 +1037,34 @@ void loop() {
     client.print("<a href=\"Link=5\">Programa Puerta Gallinero</a><br>"); 
     // Draw line
     //----------------------------------------------------------------------
-    client.print("</b><hr />");  
+     client.print("</b><hr />");  
+     
+      //Botones de abrir y cerrar manual
+      // client.println("<br>");
+      client.println("<input type=\"submit\" name =\"AbrirPuertaBtn\" value=\"Abrir Puerta\">");
+      //Button 2
+      client.println("&emsp;");
+      client.println("<input type=\"submit\" name =\"CerrarPuertaBtn\" value=\"Cerrar Puerta\">");
+      client.println("<br>");
+      
+      //Control manual de la puerta
+      client.print("<input type=\"Checkbox\" name=\"control_manual\"");
+      if (control_manual==true) client.print("checked"); else client.print("unchecked");
+      client.print("> Control Manual de la Puerta<br>");
+      client.print("<br>");
     
     // Status PAGE
     //============
     if (Page == 1) {
-      client.print("<font size = \"4\"><b>Estado Rele (D4)</font></b><br><br>"); 
+       // Draw line
+      client.print("<hr />");  
+      client.print("Control Puerta: ");
+      if ( control_sol){client.print("Control ángulo del Sol ");}else{client.print("Control horario <br>");}
+      if ( control_manual){client.print("<br>Control Manual activado <br>");}
+      
+       // Draw line
+      client.print("<hr />");   
+      client.print("<font size = \"4\"><b>Estado Rele (D4)</font></b><br>"); 
       client.print("<b>Modo Rele D4 : </b>");
       switch (Mode) {
         case 0 : client.print("Off");
@@ -967,8 +1074,8 @@ void loop() {
         case 2 : client.print("Auto");
                  break;
       }
-      client.print("<br><br>");
-      client.print("<b>Control Manual : </b>");
+      client.print("<br>");
+      client.print("<b>Control Manual (D4): </b>");
       if ( (ManualOff  == true) or (ManualOn   == true) or (ManualTime == true) ) {
         client.print("Activo");
       }
@@ -1145,8 +1252,18 @@ void loop() {
     // Time Server PAGE
     //=================
     if (Page == 4) {
+      //Latitud y Longitud
+      client.print("Latitud ");
+      client.print("<input type=\"text\"<input maxlength=\"5\" size=\"5\" name=\"Latitud\" value =\"");
+      client.print(Latitud,5);
+      client.println("\">");
+      client.print("Longitud ");
+      client.print("<input type=\"text\"<input maxlength=\"5\" size=\"5\" name=\"Longitud\" value =\"");
+      client.print(Longitud,5);
+      client.println("\">");
+      client.print("<br><br>");
+      //
       client.print("<font size = \"4\"><b><u>Time Setup</u></font></b><br><br>"); 
-      
       //Time Zone
       client.print("<font size = \"3\"><b>NTP Network Setup</font></b><br>"); 
       client.print("Time Zone ");
@@ -1230,6 +1347,16 @@ void loop() {
     //============
     if (Page == 5) {
      // Program number
+
+      client.print("Tiempo apertura (ms): <input type=\"text\"<input maxlength=\"5\" size=\"5\" name=\"t_apertura\"value =\"");
+      client.print(t_apertura);    
+      client.print("\">");
+      
+      client.print("Tiempo cierre (ms): <input type=\"text\"<input maxlength=\"5\" size=\"5\" name=\"t_cierre\"value =\"");
+      client.print(t_cierre);    
+      client.print("\">");
+      client.print("<br>");
+      
       client.print("<font size = \"4\"><b>"); 
       client.print("Program Puerta Gallinero - ");
       client.print(PgmNrG + 1);
@@ -1266,7 +1393,7 @@ void loop() {
       client.print("> Subir y Bajar puerta con salida y puesta del sol<br>");
       client.print("<br><br>");
 
-      client.print("Angulo Puesta Sol: <input type=\"text\"<input maxlength=\"2\" size=\"2\" name=\"AngPuestaSol\"value =\"");
+      client.print("Angulo Puesta Sol: <input type=\"text\"<input maxlength=\"3\" size=\"3\" name=\"AngPuestaSol\"value =\"");
       client.print(angulo_puesta_sol[PgmNrG]);    
       client.print("\">");
       client.print("<br><br>");
@@ -1366,9 +1493,11 @@ void SaveProgram() {
 //###############################################################################################
 
 void SaveProgramG() {
+  byte t2;
   for (byte i = 0; i < 7; i++) {
     byte nr = i;
     byte t1 = 150 + (nr * 14);
+    t2=t1;
     //On Time
     EEPROM.write(t1,On_TimeG[nr]/100);
     EEPROM.write(t1 +  1,On_TimeG[nr]%100);
@@ -1392,8 +1521,15 @@ void SaveProgramG() {
        
     EEPROM.commit();
   }
+  int t_ap=t_apertura/1000.0;
+  int t_cie=t_cierre/1000.0;
+  EEPROM.write(16,(int)t_ap);
+  EEPROM.write(17,(int)t_cie);
+  EEPROM.write(t2+14,control_manual);
+  EEPROM.commit();
+  
   Serial.println("salvando datosG");
-  Serial.println(On_TimeG[0]);
+  Serial.println(t_ap);
 }
 
 //###############################################################################################
@@ -1411,7 +1547,32 @@ void SaveNTP() {
   EEPROM.write( 9,IP_2);
   EEPROM.write(10,IP_3);
   EEPROM.write(11,IP_4);
+  Lat = (Latitud * 100.0);
+  Lat=abs(Lat);
+  LatH = Lat/100;
+  LatL = Lat%100;
+  EEPROM.write(12,LatH);
+  EEPROM.write(13,LatL);
+  Lon = Longitud * 100;
+  Lon=abs(Lon);
+  LonH = Lon/100;
+  LonL = Lon%100;
+  EEPROM.write(14,LonH);
+  EEPROM.write(15,LonL);
+
+  if (Latitud>0){signoLat=1;}else{signoLat=0;}
+  if (Longitud>0){signoLon=1;}else{signoLon=0;}
+
+  EEPROM.write(18,signoLat);
+  EEPROM.write(19,signoLon);
+  
   EEPROM.commit();
+
+  Serial.println("Grabando datos");
+  Serial.println(Latitud);
+  Serial.println(Lat);
+  Serial.println(LatL);
+  Serial.println(LatH);
 }
 
 
@@ -1462,6 +1623,17 @@ void ReadData() {
     EEPROM.write( 9,6  );         // NTP IP 2
     EEPROM.write(10,15 );         // NTP IP 3
     EEPROM.write(11,28 );         // NTP IP 4
+
+    EEPROM.write(12,40 );           // LatL
+    EEPROM.write(13,65 );           // LatH
+    EEPROM.write(14,3 );            // LonL
+    EEPROM.write(15,96 );          // LonH
+    EEPROM.write(16,30 );          // t_apertura
+    EEPROM.write(17,20 );          // t_cierre
+    EEPROM.write(18,1 );           // signoLat
+    EEPROM.write(19,1 );           // signoLon
+     
+    
     // Clear all programs
     for (byte i = 20; i < 105; i++) {  
       EEPROM.write(i,0);
@@ -1497,6 +1669,7 @@ void ReadData() {
     //---------------------
     On_Days[nr][7] = EEPROM.read(t1 + 11);  
   }
+  
   Mode          = EEPROM.read(1);
   OnMode        = EEPROM.read(2);
   OffMode       = EEPROM.read(3);
@@ -1508,6 +1681,29 @@ void ReadData() {
   IP_2          = EEPROM.read(9);
   IP_3          = EEPROM.read(10);
   IP_4          = EEPROM.read(11);
+
+  LatH          = EEPROM.read(12);
+  LatL          = EEPROM.read(13);
+  LonH          = EEPROM.read(14);
+  LonL          = EEPROM.read(15);
+  int t_ap      = EEPROM.read(16);
+  int t_cie     = EEPROM.read(17);
+  int signoLat  = EEPROM.read(18);
+  int signoLon  = EEPROM.read(19);
+  byte t2;
+  if(signoLat<1){signoLat=-1.0;}
+  if(signoLon<1){signoLon=-1.0;}
+
+   t_apertura=t_ap*1000;
+   t_cierre=t_cie*1000;
+  
+    Latitud=LatH*100.0+LatL;
+    Latitud=Latitud/100.0*signoLat;
+ 
+  Longitud=LonH*100+LonL;
+  Longitud=Longitud/100*(float)signoLon;
+  
+  
   // Setup timeServer IP
   timeServer[0] = IP_1;
   timeServer[1] = IP_2;
@@ -1524,6 +1720,7 @@ void ReadData() {
   for (byte i = 0; i < 7; i++) {
     byte nr = i;
     byte t1 = 150 + ( (i) * 14);
+    t2=t1;
     //On Time
     //---------------------
     On_TimeG[nr]  = EEPROM.read(t1);
@@ -1551,6 +1748,8 @@ void ReadData() {
     angulo_puesta_sol[nr]=EEPROM.read(t1 + 13);
     
   }
+
+  control_manual = EEPROM.read(t2 + 14);
   
 }
 
@@ -1924,7 +2123,7 @@ void DoTimeCheckGallinero() {
   if (timeOldG != timeNowG) {
     // Time changed - check outputs
     boolean OutputG = false;
-    boolean control_sol= false;
+     control_sol= false;
    
     
     timeOldG = timeNowG;
@@ -1979,17 +2178,24 @@ void DoTimeCheckGallinero() {
             if(!puerta_cerrada){cerrar_puerta();}
           }
     }else{
-        if(sun.dZenithAngle>angulo){
-          if(!puerta_cerrada){
+       FC_P_abierta = digitalRead(FC_P_abierta_Pin);
+       if (FC_P_abierta == HIGH ) { FC_abierta=true;} else{FC_abierta=false; }
+       FC_P_cerrada = digitalRead(FC_P_cerrada_Pin);
+       if (FC_P_cerrada == HIGH ) { FC_cerrada=true;} else{FC_cerrada=false; }
+       
+        if(sun.dZenithAngle>angulo and !control_manual){
+          if(!FC_cerrada){ 
             cerrar_puerta();
             }
           }
           else{
-          if(!puerta_abierta){
-            abrir_puerta();
-            }
+              if(!FC_abierta){
+                abrir_puerta();
+                }
           }
         }
+         Serial.println("Control temporal, Ha pasado un minuto");
+         Serial.println(control_manual);
          
     }//fin de controltiempo
     
@@ -2009,7 +2215,8 @@ void abrir_puerta(){
         yield();
         deltaT=millis()-t_inicio;
         FC_P_abierta = digitalRead(FC_P_abierta_Pin);
-         if (FC_P_abierta == LOW ) {
+        if (FC_P_abierta == HIGH ) { FC_abierta=true;} else{FC_abierta=false; }
+         if (FC_abierta ) {
             digitalWrite(Relay_abrir,HIGH); //parar orden de abrir puerta
             Serial.println("Final de carrera puerta abierta activo");
             break;
@@ -2031,11 +2238,12 @@ void cerrar_puerta(){
   digitalWrite(Relay_cerrar,LOW); //cerrar puerta
   long deltaT=0;
     
-      while (deltaT < t_apertura) {    //5 segundos máximo
+      while (deltaT < t_cierre) {    //5 segundos máximo
         yield();
         deltaT=millis()-t_inicio;
         FC_P_cerrada = digitalRead(FC_P_cerrada_Pin);
-         if (FC_P_cerrada == LOW ) {
+        if (FC_P_cerrada == HIGH ) { FC_cerrada=true;} else{FC_cerrada=false; }
+         if (FC_cerrada ) { //se activa del FC
             digitalWrite(Relay_cerrar,HIGH); //parar orden de cerrar puerta
             Serial.println("Final de carrera puerta cerrada activo");
             break;
