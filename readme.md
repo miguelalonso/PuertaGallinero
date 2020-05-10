@@ -7,3 +7,5 @@ con motor elevalunas de coche (de desguace)
 un nodemcu 
 relé de actuación
 El elevalunas se alimenta con una fuente DC de 2A
+
+
