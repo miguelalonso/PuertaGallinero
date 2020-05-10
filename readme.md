@@ -1,7 +1,9 @@
 # Automatic-Chicken-Coop-Door-
-Light sensor Automatic Chicken Coop Door
+NodeMCU Automatic Chicken Coop Door
 
-2x lm393 light sensor
- Arduino Mega 2560
- 2ch H-Brigde 
- linear actuator
+Control automático con NodeMCU para puerta de Gallinero
+
+con motor elevalunas de coche (de desguace)
+un nodemcu 
+relé de actuación
+El elevalunas se alimenta con una fuente DC de 2A
